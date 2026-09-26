@@ -1,6 +1,3 @@
-"""
-Избранное: сохранение треков и live-каналов в favorites.json.
-"""
 from __future__ import annotations
 
 import json
@@ -17,8 +14,6 @@ class Favorites:
         self._lock = threading.Lock()
         self._items: list[dict] = []
         self.load()
-
-    # -------------------------------------------------------------- public
 
     def load(self) -> None:
         if FAVORITES_PATH.exists():
@@ -40,6 +35,18 @@ class Favorites:
     def all(self) -> list[dict]:
         with self._lock:
             return list(self._items)
+
+    def all_tracks(self) -> list[Track]:
+        with self._lock:
+            return [
+                Track(
+                    url=it.get("url", ""),
+                    title=it.get("title", "Unknown"),
+                    is_live=bool(it.get("is_live", False)),
+                )
+                for it in self._items
+                if it.get("url")
+            ]
 
     def add_track(self, track: Track) -> bool:
         if not track or not track.url:

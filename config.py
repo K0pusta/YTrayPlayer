@@ -48,16 +48,21 @@ DEFAULTS: dict[str, Any] = {
     # Хоткеи вкл/выкл
     "hotkeys_enabled": True,
 
+    # Shuffle очереди
+    "shuffle_queue": False,
+
     # Настраиваемые хоткеи (формат pywin32)
     "hotkeys": {
-        "play_pause": {"mods": 0x0003, "key": 0x50},   # Ctrl+Alt+P
-        "next":       {"mods": 0x0003, "key": 0x27},   # Ctrl+Alt+Right
-        "prev":       {"mods": 0x0003, "key": 0x25},   # Ctrl+Alt+Left
-        "vol_up":     {"mods": 0x0003, "key": 0x26},   # Ctrl+Alt+Up
-        "vol_down":   {"mods": 0x0003, "key": 0x28},   # Ctrl+Alt+Down
-        "mute":       {"mods": 0x0003, "key": 0x4D},   # Ctrl+Alt+M
-        "favorite":   {"mods": 0x0003, "key": 0x46},   # Ctrl+Alt+F
-        "play_clip":  {"mods": 0x0003, "key": 0x56},   # Ctrl+Alt+V
+        "play_pause":       {"mods": 0x0003, "key": 0x50},   # Ctrl+Alt+P
+        "next":             {"mods": 0x0003, "key": 0x27},   # Ctrl+Alt+Right
+        "prev":             {"mods": 0x0003, "key": 0x25},   # Ctrl+Alt+Left
+        "vol_up":           {"mods": 0x0003, "key": 0x26},   # Ctrl+Alt+Up
+        "vol_down":         {"mods": 0x0003, "key": 0x28},   # Ctrl+Alt+Down
+        "mute":             {"mods": 0x0003, "key": 0x4D},   # Ctrl+Alt+M
+        "favorite":         {"mods": 0x0003, "key": 0x46},   # Ctrl+Alt+F
+        "play_clip":        {"mods": 0x0003, "key": 0x56},   # Ctrl+Alt+V
+        "add_to_playlist":  {"mods": 0x0003, "key": 0x41},   # Ctrl+Alt+A
+        "toggle_shuffle":   {"mods": 0x0003, "key": 0x53},   # Ctrl+Alt+S
     },
 
     # Пути к бинарникам (относительно папки exe/проекта)

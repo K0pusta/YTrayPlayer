@@ -11,8 +11,6 @@ from logging_setup import log
 
 IS_WINDOWS = sys.platform.startswith("win")
 
-# --- WinAPI константы --------------------------------------------------------
-
 MOD_ALT = 0x0001
 MOD_CONTROL = 0x0002
 MOD_SHIFT = 0x0004
@@ -30,9 +28,9 @@ HOTKEY_IDS = {
     "vol_down": 5,
     "favorite": 6,
     "play_clip": 7,
+    "add_to_playlist": 8,
+    "toggle_shuffle": 9,
 }
-
-# --- Обёртка WinAPI ----------------------------------------------------------
 
 if IS_WINDOWS:
     user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -61,8 +59,6 @@ class HotkeyManager:
         self._stop = threading.Event()
         self._thread_id: int = 0
         self._registered_ids: list[int] = []
-
-    # -------------------------------------------------------------- public
 
     def register(self, name: str, callback: Callable[[], None]) -> bool:
         if not IS_WINDOWS:
@@ -107,8 +103,6 @@ class HotkeyManager:
     def unregister_all(self) -> None:
         self._pending.clear()
         self._callbacks.clear()
-
-    # -------------------------------------------------------------- internal
 
     def _run(self) -> None:
         self._thread_id = kernel32.GetCurrentThreadId()
