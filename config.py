@@ -61,7 +61,6 @@ DEFAULTS: dict[str, Any] = {
         "mute":             {"mods": 0x0003, "key": 0x4D},   # Ctrl+Alt+M
         "favorite":         {"mods": 0x0003, "key": 0x46},   # Ctrl+Alt+F
         "play_clip":        {"mods": 0x0003, "key": 0x56},   # Ctrl+Alt+V
-        "add_to_playlist":  {"mods": 0x0003, "key": 0x41},   # Ctrl+Alt+A
         "toggle_shuffle":   {"mods": 0x0003, "key": 0x53},   # Ctrl+Alt+S
     },
 

@@ -16,7 +16,7 @@ from youtube import (
     extract_video_id,
 )
 
-CACHE_SIZE = 5
+CACHE_SIZE = 4
 MIX_QUEUE_LIMIT = 20
 
 class PlaybackQueue:
@@ -34,10 +34,11 @@ class PlaybackQueue:
         self.shuffle: bool = bool(config.get("shuffle_queue", False))
         self._shuffle_history: list[int] = []
 
+        self._failed_next_streak = 0
+
         self.on_track_changed: Optional[Callable[[Track], None]] = None
         self.on_queue_changed: Optional[Callable[[], None]] = None
         self.on_error: Optional[Callable[[str], None]] = None
-        # вызывается при старте нового трека (для resume)
         self.on_track_started: Optional[Callable[[Track], None]] = None
 
         self.player.on_end_file = self._on_end_file
@@ -54,19 +55,23 @@ class PlaybackQueue:
 
     def play_url(self, url: str) -> None:
         log.info("play_url: %s", url)
+        # очищаем текущую очередь, чтобы Mix строился от нового трека
+        with self._lock:
+            self.items.clear()
+            self.index = -1
+            self._shuffle_history.clear()
+        self._notify_queue()
+
         threading.Thread(
             target=self._expand_and_play, args=(url,), daemon=True
         ).start()
 
     def play_tracks(self, tracks: list[Track], shuffle: bool = False) -> None:
         if not tracks:
-            log.info("play_tracks: пустой список")
             return
-
         working = list(tracks)
         if shuffle:
             random.shuffle(working)
-
         with self._lock:
             self.items = working
             self.index = 0
@@ -85,41 +90,43 @@ class PlaybackQueue:
         log.info("shuffle: %s", self.shuffle)
 
     def next(self) -> None:
+        track_to_play: Optional[Track] = None
         with self._lock:
-            if not self.items:
-                pass
-            elif self.shuffle and len(self.items) > 1:
-                candidates = [i for i in range(len(self.items)) if i != self.index]
-                if candidates:
-                    self._shuffle_history.append(self.index)
-                    self.index = random.choice(candidates)
-                    track = self.items[self.index]
-                    self._resolve_and_play(track)
-                    return
-            elif 0 <= self.index < len(self.items) - 1:
-                self.index += 1
-                track = self.items[self.index]
-                self._resolve_and_play(track)
-                return
+            if self.items:
+                if self.shuffle and len(self.items) > 1:
+                    candidates = [i for i in range(len(self.items)) if i != self.index]
+                    if candidates:
+                        self._shuffle_history.append(self.index)
+                        self.index = random.choice(candidates)
+                        track_to_play = self.items[self.index]
+                elif 0 <= self.index < len(self.items) - 1:
+                    self.index += 1
+                    track_to_play = self.items[self.index]
+
+        if track_to_play is not None:
+            self._resolve_and_play(track_to_play)
+            return
+
         self.play_recommendations()
 
     def prev(self) -> None:
+        track_to_play: Optional[Track] = None
         with self._lock:
             if self.shuffle and self._shuffle_history:
                 self.index = self._shuffle_history.pop()
-                track = self.items[self.index]
-                self._resolve_and_play(track)
-                return
-            if self.items and self.index > 0:
+                if 0 <= self.index < len(self.items):
+                    track_to_play = self.items[self.index]
+            elif self.items and self.index > 0:
                 self.index -= 1
-                track = self.items[self.index]
-                self._resolve_and_play(track)
-                return
-            if self.items:
+                track_to_play = self.items[self.index]
+            elif self.items:
                 self.index = 0
-                track = self.items[0]
-                self._resolve_and_play(track)
-                return
+                track_to_play = self.items[0]
+
+        if track_to_play is not None:
+            self._resolve_and_play(track_to_play)
+            return
+
         self.play_recommendations()
 
     def current(self) -> Optional[Track]:
@@ -142,11 +149,7 @@ class PlaybackQueue:
         if not vid:
             return None
         with self._lock:
-            url = self._stream_cache.get(vid)
-            if url:
-                self._stream_cache.move_to_end(vid)
-                log.debug("cache hit: %s", track.title[:40])
-            return url
+            return self._stream_cache.get(vid)
 
     def _cache_put(self, track: Track, stream_url: str) -> None:
         vid = extract_video_id(track.url)
@@ -154,10 +157,8 @@ class PlaybackQueue:
             return
         with self._lock:
             self._stream_cache[vid] = stream_url
-            self._stream_cache.move_to_end(vid)
             while len(self._stream_cache) > CACHE_SIZE:
-                old_vid, _ = self._stream_cache.popitem(last=False)
-                log.debug("cache evict: %s", old_vid)
+                self._stream_cache.popitem(last=False)
 
     # ------------------------------------------------------------- рекомендации
 
@@ -183,7 +184,10 @@ class PlaybackQueue:
 
         def worker():
             try:
-                tracks = resolve_playlist(mix_url)
+                log.info("Mix: начинаю резолв (limit=%d)…", MIX_QUEUE_LIMIT)
+                tracks = resolve_playlist(mix_url, limit=MIX_QUEUE_LIMIT)
+                log.info("Mix: получено %d треков", len(tracks) if tracks else 0)
+
                 if not tracks:
                     log.warning("Mix пустой → обычное радио")
                     self._play_radio()
@@ -214,16 +218,22 @@ class PlaybackQueue:
         def worker():
             try:
                 track = resolve(url)
+                self._failed_next_streak = 0
                 self._play_track(track)
             except Exception as e:
                 log.exception("_load_single")
                 if self.on_error:
                     self.on_error(f"Не удалось запустить: {e}")
+                self._failed_next_streak += 1
+                if self._failed_next_streak >= 3:
+                    self._failed_next_streak = 0
+                    return
+                self._play_radio()
         threading.Thread(target=worker, name="load-single", daemon=True).start()
 
     def _expand_and_play(self, url: str) -> None:
         try:
-            tracks = resolve_playlist(url)
+            tracks = resolve_playlist(url, limit=MIX_QUEUE_LIMIT)
         except Exception as e:
             log.exception("_expand_and_play")
             if self.on_error:
@@ -247,6 +257,7 @@ class PlaybackQueue:
         cached = self._cache_get(track)
         if cached and not track.is_live:
             track.stream_url = cached
+            self._failed_next_streak = 0
             self._play_track(track)
             self._preload_next()
             return
@@ -259,12 +270,17 @@ class PlaybackQueue:
                 track.title = fresh.title or track.title
                 if not track.is_live:
                     self._cache_put(track, track.stream_url)
+                self._failed_next_streak = 0
                 self._play_track(track)
                 self._preload_next()
             except Exception as e:
-                log.exception("_resolve_and_play")
+                log.exception("_resolve_and_play: %s", track.title[:40])
                 if self.on_error:
                     self.on_error(f"Ошибка трека: {e}")
+                self._failed_next_streak += 1
+                if self._failed_next_streak >= 3:
+                    self._failed_next_streak = 0
+                    return
                 self.next()
         threading.Thread(target=worker, name="resolve-play", daemon=True).start()
 
@@ -272,14 +288,18 @@ class PlaybackQueue:
         if not track.stream_url:
             if self.on_error:
                 self.on_error(f"Нет потока для {track.title}")
+            self._failed_next_streak += 1
+            if self._failed_next_streak >= 3:
+                self._failed_next_streak = 0
+                return
             self.next()
             return
 
+        self._failed_next_streak = 0
         self._last_played = track
         log.info("Играем: %s (%s)", track.title, "LIVE" if track.is_live else "VOD")
         self.player.play_url(track.stream_url)
 
-        # resume-хук
         if self.on_track_started:
             try:
                 self.on_track_started(track)
@@ -316,13 +336,12 @@ class PlaybackQueue:
 
         def worker():
             try:
-                log.debug("preload: %s", nxt.title[:40])
                 fresh = resolve(nxt.url)
                 if fresh.stream_url and not fresh.is_live:
                     nxt.stream_url = fresh.stream_url
                     nxt.title = fresh.title or nxt.title
                     self._cache_put(nxt, fresh.stream_url)
-                    log.debug("preload done: %s", nxt.title[:40])
+                    log.info("preload done: %s", nxt.title[:40])
             except Exception:
                 log.exception("preload")
             finally:
@@ -335,7 +354,7 @@ class PlaybackQueue:
     def _play_radio(self) -> None:
         url = config.get("radio_url")
         if not url:
-            log.info("radio_url пустой — очередь кончилась, стоп")
+            log.info("radio_url пустой — стоп")
             self.player.stop()
             return
         log.info("Очередь пуста → радио: %s", url)
@@ -345,11 +364,9 @@ class PlaybackQueue:
 
     def _on_end_file(self, reason: str) -> None:
         if reason in ("stop", "quit", "redirect"):
-            log.debug("end-file (%s) — игнорируем", reason)
             return
 
         if self._advancing:
-            log.debug("end-file (%s) — уже переключаемся, игнор", reason)
             return
         self._advancing = True
         try:

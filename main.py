@@ -99,11 +99,6 @@ def main() -> None:
             last_url["value"] = url
             q.play_url(url)
 
-    def hk_add_to_playlist():
-        if not _hotkeys_enabled():
-            return
-        ui_queue.put("add_to_playlist")
-
     def hk_toggle_shuffle():
         if not _hotkeys_enabled():
             return
@@ -121,7 +116,6 @@ def main() -> None:
         ("vol_down", hk_vol_down),
         ("favorite", hk_favorite),
         ("play_clip", hk_play_clip),
-        ("add_to_playlist", hk_add_to_playlist),
         ("toggle_shuffle", hk_toggle_shuffle),
     ]:
         hk.register(name, cb)
@@ -222,6 +216,8 @@ def main() -> None:
             if tray_ref["obj"]:
                 tray_ref["obj"].refresh_menu()
 
+    # --- уведомления / хоткеи / shuffle / язык / ytdlp ---
+
     def tray_toggle_notifications():
         new_val = not notify.is_enabled()
         notify.set_enabled(new_val)
@@ -307,6 +303,12 @@ def main() -> None:
     tray_ref["obj"] = tray
     tray.start()
 
+    # --- лог mpv media-title (для диагностики) ---
+    def _on_mpv_title(t: str) -> None:
+        log.info("main: mpv media-title = %s", t)
+
+    player.on_title = _on_mpv_title
+
     _orig_on_track = q.on_track_changed
 
     def on_track_with_tray(track: Track):
@@ -321,7 +323,9 @@ def main() -> None:
         resume.set_track(track)
 
     q.on_track_started = on_track_started
+    # --- конец трея ---
 
+    # --- старт: resume или start_url ---
     start_url = config.get("start_url")
     if start_url:
         print("Играем стартовый URL…")
@@ -333,6 +337,7 @@ def main() -> None:
             q.play_track_direct(rt)
         else:
             print("Нечего продолжать — ждём команды пользователя")
+    # --- конец старта ---
 
     def watchdog():
         while not quit_flag["stop"]:

@@ -20,20 +20,17 @@ _VIDEO_ID_RE = re.compile(
     r"(?:v=|youtu\.be/|/live/|/shorts/|/embed/)([A-Za-z0-9_-]{11})"
 )
 
-
 def extract_video_id(url: str) -> Optional[str]:
     if not url:
         return None
     m = _VIDEO_ID_RE.search(url)
     return m.group(1) if m else None
 
-
 def make_mix_url(video_url: str) -> Optional[str]:
     vid = extract_video_id(video_url)
     if not vid:
         return None
     return f"https://www.youtube.com/watch?v={vid}&list=RD{vid}"
-
 
 # --- утилиты -----------------------------------------------------------------
 
@@ -80,7 +77,6 @@ class Track:
         tag = "LIVE" if self.is_live else "VOD"
         return f"<Track {tag} {self.title[:40]!r}>"
 
-
 # --- резолв ------------------------------------------------------------------
 
 def resolve(url: str) -> Track:
@@ -89,11 +85,12 @@ def resolve(url: str) -> Track:
         "--no-warnings",
         "--no-playlist",
         "--format", "bestaudio/best",
-        "--no-cache-dir",
+        "--no-check-certificates",
+        "--socket-timeout", "5",
         url,
     ]
     try:
-        p = _run_ytdlp(args)
+        p = _run_ytdlp(args, timeout=30)
     except subprocess.TimeoutExpired:
         raise RuntimeError("yt-dlp timeout")
 
@@ -109,17 +106,18 @@ def resolve(url: str) -> Track:
 
     return _info_to_track(info)
 
-
-def resolve_playlist(url: str) -> list[Track]:
+def resolve_playlist(url: str, limit: int = 20) -> list[Track]:
     args = [
         "--dump-single-json",
         "--no-warnings",
         "--flat-playlist",
-        "--no-cache-dir",
+        "--no-check-certificates",
+        "--socket-timeout", "5",
+        "--playlist-end", str(limit),
         url,
     ]
     try:
-        p = _run_ytdlp(args, timeout=120)
+        p = _run_ytdlp(args, timeout=60)
     except subprocess.TimeoutExpired:
         raise RuntimeError("yt-dlp timeout")
 
@@ -140,10 +138,8 @@ def resolve_playlist(url: str) -> list[Track]:
 
     return [_info_to_track(info)]
 
-
 def _info_to_track(info: dict[str, Any], flat: bool = False) -> Track:
     url = info.get("webpage_url") or info.get("url") or ""
-
     if not url and info.get("id"):
         url = f"https://www.youtube.com/watch?v={info['id']}"
 
@@ -176,21 +172,22 @@ def resolve_async(url: str,
             on_done(None, e)
     threading.Thread(target=worker, name="resolve", daemon=True).start()
 
-def resolve_playlist_async(url: str,
-                           on_done: Callable[[Optional[list[Track]], Optional[Exception]], None]) -> None:
+def resolve_playlist_async(url: str, limit: int = 20,
+                           on_done: Optional[Callable] = None) -> None:
     def worker():
         try:
-            tracks = resolve_playlist(url)
-            on_done(tracks, None)
+            tracks = resolve_playlist(url, limit=limit)
+            if on_done:
+                on_done(tracks, None)
         except Exception as e:
             log.exception("resolve_playlist_async")
-            on_done(None, e)
+            if on_done:
+                on_done(None, e)
     threading.Thread(target=worker, name="resolve-playlist", daemon=True).start()
 
 # --- обновление yt-dlp -------------------------------------------------------
 
 YTDLP_RELEASE_URL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
-
 
 def update_ytdlp(on_done: Optional[Callable[[bool, str], None]] = None) -> None:
     def worker():

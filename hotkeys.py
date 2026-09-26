@@ -28,7 +28,6 @@ HOTKEY_IDS = {
     "vol_down": 5,
     "favorite": 6,
     "play_clip": 7,
-    "add_to_playlist": 8,
     "toggle_shuffle": 9,
 }
 
