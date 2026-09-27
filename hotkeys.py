@@ -11,6 +11,8 @@ from logging_setup import log
 
 IS_WINDOWS = sys.platform.startswith("win")
 
+# --- WinAPI константы --------------------------------------------------------
+
 MOD_ALT = 0x0001
 MOD_CONTROL = 0x0002
 MOD_SHIFT = 0x0004
@@ -20,6 +22,7 @@ MOD_NOREPEAT = 0x4000
 WM_HOTKEY = 0x0312
 WM_QUIT = 0x0012
 
+# ID хоткеев
 HOTKEY_IDS = {
     "play_pause": 1,
     "next": 2,
@@ -28,8 +31,10 @@ HOTKEY_IDS = {
     "vol_down": 5,
     "favorite": 6,
     "play_clip": 7,
-    "toggle_shuffle": 9,
+    "toggle_shuffle": 8,
 }
+
+# --- Обёртка WinAPI ----------------------------------------------------------
 
 if IS_WINDOWS:
     user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -50,14 +55,50 @@ if IS_WINDOWS:
                                           wintypes.WPARAM, wintypes.LPARAM]
     user32.PostThreadMessageW.restype = wintypes.BOOL
 
+_VK_NAMES = {
+    0x08: "Backspace", 0x09: "Tab", 0x0D: "Enter", 0x1B: "Esc",
+    0x20: "Space",
+    0x25: "Left", 0x26: "Up", 0x27: "Right", 0x28: "Down",
+    0x2D: "Ins", 0x2E: "Del",
+    0x30: "0", 0x31: "1", 0x32: "2", 0x33: "3", 0x34: "4",
+    0x35: "5", 0x36: "6", 0x37: "7", 0x38: "8", 0x39: "9",
+}
+
+def _vk_name(vk: int) -> str:
+    # A-Z
+    if 0x41 <= vk <= 0x5A:
+        return chr(vk)
+    # F1-F24
+    if 0x70 <= vk <= 0x87:
+        return f"F{vk - 0x70 + 1}"
+    return _VK_NAMES.get(vk, f"0x{vk:02X}")
+
+def vk_to_string(mods: int, key: int) -> str:
+    parts = []
+    if mods & MOD_CONTROL: parts.append("Ctrl")
+    if mods & MOD_ALT:     parts.append("Alt")
+    if mods & MOD_SHIFT:   parts.append("Shift")
+    if mods & MOD_WIN:     parts.append("Win")
+    parts.append(_vk_name(key))
+    return "+".join(parts)
+
+# --- Менеджер хоткеев --------------------------------------------------------
+
 class HotkeyManager:
+
     def __init__(self) -> None:
         self._pending: dict[int, tuple[str, int, int, Callable[[], None]]] = {}
         self._callbacks: dict[int, Callable[[], None]] = {}
+        self._registered_ids: list[int] = []
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._thread_id: int = 0
-        self._registered_ids: list[int] = []
+        self._ready = threading.Event()
+
+        self.last_registered: list[str] = []
+        self.last_failed: list[tuple[str, int]] = []  # (name, error_code)
+
+    # -------------------------------------------------------------- public
 
     def register(self, name: str, callback: Callable[[], None]) -> bool:
         if not IS_WINDOWS:
@@ -74,6 +115,10 @@ class HotkeyManager:
             log.warning("Неизвестный хоткей: %s", name)
             return False
 
+        if not spec.get("enabled", True):
+            log.info("Хоткей %s отключён — не регистрируем", name)
+            return False
+
         mods = int(spec["mods"]) | MOD_NOREPEAT
         key = int(spec["key"])
         self._pending[hk_id] = (name, mods, key, callback)
@@ -85,12 +130,10 @@ class HotkeyManager:
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
+        self._ready.clear()
         self._thread = threading.Thread(target=self._run, name="hotkeys", daemon=True)
         self._thread.start()
-        for _ in range(50):
-            if self._thread_id:
-                break
-            threading.Event().wait(0.02)
+        self._ready.wait(timeout=2.0)
 
     def stop(self) -> None:
         self._stop.set()
@@ -103,6 +146,60 @@ class HotkeyManager:
         self._pending.clear()
         self._callbacks.clear()
 
+    def reregister(self) -> tuple[list[str], list[tuple[str, int]]]:
+        if not IS_WINDOWS:
+            return [], []
+        if not self._thread or not self._thread.is_alive():
+            log.warning("Поток хоткеев не запущен — reregister пропущен")
+            return [], []
+
+        saved_callbacks = dict(self._callbacks)
+
+        # Снять все
+        for hk_id in self._registered_ids:
+            try:
+                user32.UnregisterHotKey(None, hk_id)
+            except Exception:
+                pass
+        self._registered_ids.clear()
+        self._callbacks.clear()
+        self._pending.clear()
+
+        self.last_registered = []
+        self.last_failed = []
+
+        for name, hk_id in HOTKEY_IDS.items():
+            spec = config.get("hotkeys", {}).get(name)
+            if not spec:
+                continue
+
+            cb = saved_callbacks.get(hk_id)
+            if cb is None:
+                continue
+
+            if not spec.get("enabled", True):
+                log.info("Хоткей %s отключён — не регистрируем", name)
+                continue
+
+            mods = int(spec["mods"]) | MOD_NOREPEAT
+            key = int(spec["key"])
+
+            ok = user32.RegisterHotKey(None, hk_id, mods, key)
+            if not ok:
+                err = ctypes.get_last_error()
+                log.error("reregister: RegisterHotKey(%s) err=%s", name, err)
+                self.last_failed.append((name, err))
+                continue
+
+            self._registered_ids.append(hk_id)
+            self._callbacks[hk_id] = cb
+            self.last_registered.append(name)
+            log.info("reregister: хоткей %s зарегистрирован", name)
+
+        return self.last_registered, self.last_failed
+
+    # -------------------------------------------------------------- internal
+
     def _run(self) -> None:
         self._thread_id = kernel32.GetCurrentThreadId()
         log.info("HotkeyManager: поток запущен (thread_id=%s)", self._thread_id)
@@ -111,11 +208,15 @@ class HotkeyManager:
             ok = user32.RegisterHotKey(None, hk_id, mods, key)
             if not ok:
                 err = ctypes.get_last_error()
-                log.error("RegisterHotKey(%s) провалился: err=%s (вероятно, комбинация занята)", name, err)
+                log.error("RegisterHotKey(%s) провалился: err=%s", name, err)
+                self.last_failed.append((name, err))
                 continue
             self._registered_ids.append(hk_id)
             self._callbacks[hk_id] = cb
+            self.last_registered.append(name)
             log.info("Хоткей зарегистрирован: %s (mods=0x%X, key=0x%X)", name, mods, key)
+
+        self._ready.set()
 
         msg = wintypes.MSG()
         while not self._stop.is_set():
@@ -140,17 +241,3 @@ class HotkeyManager:
                 pass
         self._registered_ids.clear()
         log.info("HotkeyManager: поток завершён")
-
-
-def hotkey_to_string(mods: int, key: int) -> str:
-    parts = []
-    if mods & MOD_CONTROL: parts.append("Ctrl")
-    if mods & MOD_ALT:     parts.append("Alt")
-    if mods & MOD_SHIFT:   parts.append("Shift")
-    if mods & MOD_WIN:     parts.append("Win")
-    vk_names = {
-        0x50: "P", 0x4D: "M", 0x46: "F", 0x56: "V", 0x30: "0",
-        0x25: "Left", 0x26: "Up", 0x27: "Right", 0x28: "Down",
-    }
-    parts.append(vk_names.get(key, f"0x{key:02X}"))
-    return "+".join(parts)

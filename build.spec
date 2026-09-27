@@ -1,8 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""
-PyInstaller spec для YTrayPlayer.
-Собирает один exe. mpv и yt-dlp кладутся РЯДОМ в bin/ (см. make_dist.bat).
-"""
+
 import sys
 from pathlib import Path
 
@@ -23,17 +20,33 @@ if locales_dir.exists():
         if f.is_file():
             datas.append((str(f), "locales"))
 
-# Скрытые импорты — то, что PyInstaller иногда не находит сам
 hiddenimports = [
     "pystray._win32",
     "win11toast",
-    "PIL._tkinter_finder",  # на всякий случай
+    "PIL._tkinter_finder",
     "PySide6.QtCore",
     "PySide6.QtGui",
     "PySide6.QtWidgets",
+    "psutil",
+    "pypresence",
+    "win32file",
+    "pywintypes",
+    "discord_rpc",
+    "hotkey_widget",
+    "hotkeys_dialog",
+    "playlist_editor",
+    "settings_dialog",
+    "search_dialog",
+    "resume",
+    "favorites",
+    "playlists",
+    "notify",
+    "i18n",
+    "clipboard",
+    "input_dialog",
+    "playqueue",
 ]
 
-# Исключаем лишнее, чтобы уменьшить размер exe
 excludes = [
     "tkinter",
     "matplotlib",
@@ -80,10 +93,10 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=False,             # UPX выключен — антивирусы на него ругаются
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,         # без чёрного окна консоли
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

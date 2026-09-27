@@ -61,17 +61,19 @@ def _run_ytdlp(args: list[str], timeout: int = 60) -> subprocess.CompletedProces
 # --- Track -------------------------------------------------------------------
 
 class Track:
-    __slots__ = ("url", "title", "is_live", "stream_url", "duration", "kind")
+    __slots__ = ("url", "title", "is_live", "stream_url", "duration", "kind",
+                 "uploader")
 
     def __init__(self, url: str, title: str = "", is_live: bool = False,
                  stream_url: str = "", duration: Optional[float] = None,
-                 kind: str = "video"):
+                 kind: str = "video", uploader: str = ""):
         self.url = url
         self.title = title
         self.is_live = is_live
         self.stream_url = stream_url
         self.duration = duration
         self.kind = kind
+        self.uploader = uploader
 
     def __repr__(self) -> str:
         tag = "LIVE" if self.is_live else "VOD"
@@ -138,6 +140,44 @@ def resolve_playlist(url: str, limit: int = 20) -> list[Track]:
 
     return [_info_to_track(info)]
 
+def search(query: str, limit: int = 10) -> list[Track]:
+    if not query or not query.strip():
+        return []
+
+    query = query.strip()
+    args = [
+        "--dump-single-json",
+        "--no-warnings",
+        "--flat-playlist",
+        "--no-check-certificates",
+        "--socket-timeout", "5",
+        "--playlist-end", str(limit),
+        f"ytsearch{limit}:{query}",
+    ]
+    try:
+        p = _run_ytdlp(args, timeout=30)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("yt-dlp timeout (поиск)")
+
+    if p.returncode != 0:
+        err = (p.stderr or "").strip().splitlines()
+        msg = err[-1] if err else f"yt-dlp exit {p.returncode}"
+        raise RuntimeError(msg)
+
+    try:
+        info = json.loads(p.stdout)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"yt-dlp вернул не JSON: {e}")
+
+    out: list[Track] = []
+    entries = info.get("entries") or []
+    for e in entries:
+        if not e:
+            continue
+        out.append(_info_to_track(e, flat=True))
+    return out
+
+
 def _info_to_track(info: dict[str, Any], flat: bool = False) -> Track:
     url = info.get("webpage_url") or info.get("url") or ""
     if not url and info.get("id"):
@@ -149,6 +189,7 @@ def _info_to_track(info: dict[str, Any], flat: bool = False) -> Track:
 
     duration = info.get("duration")
     kind = "live" if is_live else "video"
+    uploader = info.get("uploader") or info.get("channel") or ""
 
     stream_url = ""
     if not flat:
@@ -157,7 +198,8 @@ def _info_to_track(info: dict[str, Any], flat: bool = False) -> Track:
             stream_url = info.get("manifest_url") or ""
 
     return Track(url=url, title=title, is_live=is_live,
-                 stream_url=stream_url, duration=duration, kind=kind)
+                 stream_url=stream_url, duration=duration, kind=kind,
+                 uploader=uploader)
 
 # --- async-обёртки -----------------------------------------------------------
 
@@ -184,6 +226,20 @@ def resolve_playlist_async(url: str, limit: int = 20,
             if on_done:
                 on_done(None, e)
     threading.Thread(target=worker, name="resolve-playlist", daemon=True).start()
+
+def search_async(query: str, limit: int = 10,
+                 on_done: Optional[Callable[[Optional[list[Track]], Optional[Exception]], None]] = None) -> None:
+    def worker():
+        try:
+            tracks = search(query, limit=limit)
+            if on_done:
+                on_done(tracks, None)
+        except Exception as e:
+            log.exception("search_async")
+            if on_done:
+                on_done(None, e)
+    threading.Thread(target=worker, name="search", daemon=True).start()
+
 
 # --- обновление yt-dlp -------------------------------------------------------
 

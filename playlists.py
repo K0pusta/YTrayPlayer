@@ -10,7 +10,6 @@ from config import PLAYLISTS_PATH
 from logging_setup import log
 from youtube import Track
 
-# Паттерны: ссылка на плейлист YouTube
 PLAYLIST_PATTERNS = [
     re.compile(r"^https?://(www\.)?youtube\.com/playlist\?.*list=[\w-]+", re.I),
     re.compile(r"^https?://(www\.)?youtube\.com/watch\?.*list=[\w-]+", re.I),
@@ -145,6 +144,7 @@ class Playlists:
                         "url": track.url,
                         "title": track.title or "Unknown",
                         "is_live": bool(track.is_live),
+                        "uploader": getattr(track, "uploader", "") or "",
                         "added": datetime.now().isoformat(timespec="seconds"),
                     })
                     self.save()
@@ -163,6 +163,39 @@ class Playlists:
                         return True
         return False
 
+    def rename(self, old_name: str, new_name: str) -> bool:
+        old_name = (old_name or "").strip()
+        new_name = (new_name or "").strip()
+        if not old_name or not new_name:
+            return False
+        if old_name == new_name:
+            return True
+        with self._lock:
+            for it in self._items:
+                if it.get("name") == new_name:
+                    log.info("Имя %s уже занято", new_name)
+                    return False
+            for it in self._items:
+                if it.get("name") == old_name:
+                    it["name"] = new_name
+                    self.save()
+                    log.info("Плейлист %s → %s", old_name, new_name)
+                    return True
+        return False
+
+    def set_user_tracks(self, name: str, tracks: list[dict]) -> bool:
+        name = (name or "").strip()
+        if not name:
+            return False
+        with self._lock:
+            for it in self._items:
+                if it.get("name") == name and it.get("type") == "user":
+                    it["tracks"] = list(tracks)
+                    self.save()
+                    log.info("Плейлист %s: сохранено %d треков", name, len(tracks))
+                    return True
+        return False
+
     def user_tracks(self, name: str) -> list[Track]:
         with self._lock:
             for it in self._items:
@@ -172,6 +205,7 @@ class Playlists:
                             url=t.get("url", ""),
                             title=t.get("title", "Unknown"),
                             is_live=bool(t.get("is_live", False)),
+                            uploader=t.get("uploader", "") or "",
                         )
                         for t in it.get("tracks", [])
                         if t.get("url")

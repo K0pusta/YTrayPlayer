@@ -49,29 +49,23 @@ class TrayIcon:
         on_quit: Callable[[], None],
         on_play_clipboard: Optional[Callable[[], None]] = None,
         on_input_url: Optional[Callable[[], None]] = None,
+        on_search: Optional[Callable[[], None]] = None,
         on_add_favorite: Optional[Callable[[], None]] = None,
         favorites_provider: Optional[Callable[[], list[dict]]] = None,
         on_play_favorite: Optional[Callable[[str], None]] = None,
         on_remove_favorite: Optional[Callable[[str], None]] = None,
         on_play_all_favorites: Optional[Callable[[], None]] = None,
-        on_toggle_favorites_shuffle: Optional[Callable[[], None]] = None,
-        favorites_shuffle_state: Optional[Callable[[], bool]] = None,
         on_save_playlist: Optional[Callable[[], None]] = None,
         playlists_provider: Optional[Callable[[], list[dict]]] = None,
         on_play_playlist: Optional[Callable[[str], None]] = None,
         on_play_playlist_shuffle: Optional[Callable[[str], None]] = None,
         on_remove_playlist: Optional[Callable[[str], None]] = None,
+        on_edit_playlist: Optional[Callable[[str], None]] = None,
         on_create_playlist: Optional[Callable[[], None]] = None,
         on_add_current_to_playlist: Optional[Callable[[], None]] = None,
-        on_toggle_notifications: Optional[Callable[[], None]] = None,
-        notifications_state: Optional[Callable[[], bool]] = None,
-        on_toggle_hotkeys: Optional[Callable[[], None]] = None,
-        hotkeys_state: Optional[Callable[[], bool]] = None,
         on_toggle_shuffle: Optional[Callable[[], None]] = None,
         shuffle_state: Optional[Callable[[], bool]] = None,
-        on_set_language: Optional[Callable[[str], None]] = None,
-        language_state: Optional[Callable[[], str]] = None,
-        on_update_ytdlp: Optional[Callable[[], None]] = None,
+        on_open_settings: Optional[Callable[[], None]] = None,
     ) -> None:
         self.on_play_pause = on_play_pause
         self.on_next = on_next
@@ -79,29 +73,23 @@ class TrayIcon:
         self.on_quit = on_quit
         self.on_play_clipboard = on_play_clipboard
         self.on_input_url = on_input_url
+        self.on_search = on_search
         self.on_add_favorite = on_add_favorite
         self.favorites_provider = favorites_provider
         self.on_play_favorite = on_play_favorite
         self.on_remove_favorite = on_remove_favorite
         self.on_play_all_favorites = on_play_all_favorites
-        self.on_toggle_favorites_shuffle = on_toggle_favorites_shuffle
-        self.favorites_shuffle_state = favorites_shuffle_state
         self.on_save_playlist = on_save_playlist
         self.playlists_provider = playlists_provider
         self.on_play_playlist = on_play_playlist
         self.on_play_playlist_shuffle = on_play_playlist_shuffle
         self.on_remove_playlist = on_remove_playlist
+        self.on_edit_playlist = on_edit_playlist
         self.on_create_playlist = on_create_playlist
         self.on_add_current_to_playlist = on_add_current_to_playlist
-        self.on_toggle_notifications = on_toggle_notifications
-        self.notifications_state = notifications_state
-        self.on_toggle_hotkeys = on_toggle_hotkeys
-        self.hotkeys_state = hotkeys_state
         self.on_toggle_shuffle = on_toggle_shuffle
         self.shuffle_state = shuffle_state
-        self.on_set_language = on_set_language
-        self.language_state = language_state
-        self.on_update_ytdlp = on_update_ytdlp
+        self.on_open_settings = on_open_settings
 
         self._icon: Optional[pystray.Icon] = None
         self._title: str = "YTray Player"
@@ -125,6 +113,8 @@ class TrayIcon:
                              self._click_play_clipboard),
             pystray.MenuItem(t("input_url", "Enter URL…"),
                              self._click_input_url),
+            pystray.MenuItem(t("search", "🔍 Поиск…"),
+                             self._click_search),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(t("add_favorite", "Add to favorites"),
                              self._click_add_favorite),
@@ -139,20 +129,8 @@ class TrayIcon:
             pystray.MenuItem(t("playlists", "Playlists"),
                              self._submenu_playlists()),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem(
-                t("notifications", "Notifications"),
-                self._click_toggle_notifications,
-                checked=lambda item: bool(self.notifications_state and self.notifications_state()),
-            ),
-            pystray.MenuItem(
-                t("hotkeys", "Hotkeys"),
-                self._click_toggle_hotkeys,
-                checked=lambda item: bool(self.hotkeys_state and self.hotkeys_state()),
-            ),
-            pystray.MenuItem(t("language", "Language"), self._submenu_language()),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem(t("update_ytdlp", "Update yt-dlp"),
-                             self._click_update_ytdlp),
+            pystray.MenuItem(t("settings", "⚙️ Настройки…"),
+                             self._click_settings),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(t("quit", "Quit"), self._click_quit),
         )
@@ -197,7 +175,7 @@ class TrayIcon:
             except Exception:
                 pass
 
-    # -------------------------------------------------------------- подменю: избранное
+    # -------------------------------------------------------------- избранное
 
     def _submenu_favorites(self) -> pystray.Menu:
         def make_items():
@@ -205,11 +183,6 @@ class TrayIcon:
             result.append(pystray.MenuItem(
                 t("play_all_favorites", "▶ Слушать всё избранное"),
                 self._click_play_all_favorites,
-            ))
-            result.append(pystray.MenuItem(
-                t("favorites_shuffle", "Shuffle избранного"),
-                self._click_toggle_favorites_shuffle,
-                checked=lambda item: bool(self.favorites_shuffle_state and self.favorites_shuffle_state()),
             ))
             result.append(pystray.Menu.SEPARATOR)
 
@@ -244,45 +217,27 @@ class TrayIcon:
 
     def _click_play_all_favorites(self, icon, item) -> None:
         if self.on_play_all_favorites:
-            try:
-                self.on_play_all_favorites()
-            except Exception:
-                log.exception("play_all_favorites")
-
-    def _click_toggle_favorites_shuffle(self, icon, item) -> None:
-        if self.on_toggle_favorites_shuffle:
-            try:
-                self.on_toggle_favorites_shuffle()
-            except Exception:
-                log.exception("toggle_favorites_shuffle")
-        self.refresh_menu()
+            try: self.on_play_all_favorites()
+            except Exception: log.exception("play_all_favorites")
 
     def _click_play_favorite_item(self, icon, item, url: str = "") -> None:
-        if not url:
-            return
+        if not url: return
         try:
-            if self.on_play_favorite:
-                self.on_play_favorite(url)
-        except Exception:
-            log.exception("play_favorite")
+            if self.on_play_favorite: self.on_play_favorite(url)
+        except Exception: log.exception("play_favorite")
 
     def _click_remove_favorite_item(self, icon, item, url: str = "") -> None:
-        if not url:
-            return
+        if not url: return
         try:
-            if self.on_remove_favorite:
-                self.on_remove_favorite(url)
-        except Exception:
-            log.exception("remove_favorite")
+            if self.on_remove_favorite: self.on_remove_favorite(url)
+        except Exception: log.exception("remove_favorite")
 
     def _click_add_favorite(self, icon, item) -> None:
         if self.on_add_favorite:
-            try:
-                self.on_add_favorite()
-            except Exception:
-                log.exception("add_favorite")
+            try: self.on_add_favorite()
+            except Exception: log.exception("add_favorite")
 
-    # -------------------------------------------------------------- подменю: плейлисты
+    # -------------------------------------------------------------- плейлисты
 
     def _submenu_playlists(self) -> pystray.Menu:
         def make_items():
@@ -315,6 +270,8 @@ class TrayIcon:
                                          functools.partial(self._click_play_playlist_item, name=name)),
                         pystray.MenuItem(t("play_shuffle", "Играть в shuffle"),
                                          functools.partial(self._click_play_playlist_shuffle, name=name)),
+                        pystray.MenuItem(t("edit_playlist", "✏️ Редактировать…"),
+                                         functools.partial(self._click_edit_playlist, name=name)),
                         pystray.MenuItem(t("delete_playlist", "Удалить плейлист"),
                                          functools.partial(self._click_remove_playlist_item, name=name)),
                     )
@@ -325,67 +282,38 @@ class TrayIcon:
 
     def _click_save_playlist(self, icon, item) -> None:
         if self.on_save_playlist:
-            try:
-                self.on_save_playlist()
-            except Exception:
-                log.exception("save_playlist")
+            try: self.on_save_playlist()
+            except Exception: log.exception("save_playlist")
 
     def _click_create_playlist(self, icon, item) -> None:
         if self.on_create_playlist:
-            try:
-                self.on_create_playlist()
-            except Exception:
-                log.exception("create_playlist")
+            try: self.on_create_playlist()
+            except Exception: log.exception("create_playlist")
 
     def _click_add_to_playlist(self, icon, item) -> None:
         if self.on_add_current_to_playlist:
-            try:
-                self.on_add_current_to_playlist()
-            except Exception:
-                log.exception("add_to_playlist")
+            try: self.on_add_current_to_playlist()
+            except Exception: log.exception("add_to_playlist")
 
     def _click_play_playlist_item(self, icon, item, name: str = "") -> None:
         if name and self.on_play_playlist:
-            try:
-                self.on_play_playlist(name)
-            except Exception:
-                log.exception("play_playlist")
+            try: self.on_play_playlist(name)
+            except Exception: log.exception("play_playlist")
 
     def _click_play_playlist_shuffle(self, icon, item, name: str = "") -> None:
         if name and self.on_play_playlist_shuffle:
-            try:
-                self.on_play_playlist_shuffle(name)
-            except Exception:
-                log.exception("play_playlist_shuffle")
+            try: self.on_play_playlist_shuffle(name)
+            except Exception: log.exception("play_playlist_shuffle")
+
+    def _click_edit_playlist(self, icon, item, name: str = "") -> None:
+        if name and self.on_edit_playlist:
+            try: self.on_edit_playlist(name)
+            except Exception: log.exception("edit_playlist")
 
     def _click_remove_playlist_item(self, icon, item, name: str = "") -> None:
         if name and self.on_remove_playlist:
-            try:
-                self.on_remove_playlist(name)
-            except Exception:
-                log.exception("remove_playlist")
-
-    # -------------------------------------------------------------- подменю: язык
-
-    def _submenu_language(self) -> pystray.Menu:
-        def make_items():
-            cur = self.language_state() if self.language_state else "ru"
-            return [
-                pystray.MenuItem(t("lang_ru", "Русский"),
-                                 functools.partial(self._click_set_language_item, lang="ru"),
-                                 checked=lambda item: cur == "ru", radio=True),
-                pystray.MenuItem(t("lang_en", "English"),
-                                 functools.partial(self._click_set_language_item, lang="en"),
-                                 checked=lambda item: cur == "en", radio=True),
-            ]
-        return pystray.Menu(make_items)
-
-    def _click_set_language_item(self, icon, item, lang: str = "ru") -> None:
-        if self.on_set_language:
-            try:
-                self.on_set_language(lang)
-            except Exception:
-                log.exception("set_language")
+            try: self.on_remove_playlist(name)
+            except Exception: log.exception("remove_playlist")
 
     # -------------------------------------------------------------- клики
 
@@ -406,14 +334,10 @@ class TrayIcon:
 
     def _click_quit(self, icon, item) -> None:
         try:
-            if self.on_quit:
-                self.on_quit()
-        except Exception:
-            log.exception("quit")
-        try:
-            icon.stop()
-        except Exception:
-            pass
+            if self.on_quit: self.on_quit()
+        except Exception: log.exception("quit")
+        try: icon.stop()
+        except Exception: pass
 
     def _click_play_clipboard(self, icon, item) -> None:
         if self.on_play_clipboard:
@@ -425,17 +349,10 @@ class TrayIcon:
             try: self.on_input_url()
             except Exception: log.exception("input_url")
 
-    def _click_toggle_notifications(self, icon, item) -> None:
-        if self.on_toggle_notifications:
-            try: self.on_toggle_notifications()
-            except Exception: log.exception("toggle_notifications")
-        self.refresh_menu()
-
-    def _click_toggle_hotkeys(self, icon, item) -> None:
-        if self.on_toggle_hotkeys:
-            try: self.on_toggle_hotkeys()
-            except Exception: log.exception("toggle_hotkeys")
-        self.refresh_menu()
+    def _click_search(self, icon, item) -> None:
+        if self.on_search:
+            try: self.on_search()
+            except Exception: log.exception("search")
 
     def _click_toggle_shuffle(self, icon, item) -> None:
         if self.on_toggle_shuffle:
@@ -443,7 +360,7 @@ class TrayIcon:
             except Exception: log.exception("toggle_shuffle")
         self.refresh_menu()
 
-    def _click_update_ytdlp(self, icon, item) -> None:
-        if self.on_update_ytdlp:
-            try: self.on_update_ytdlp()
-            except Exception: log.exception("update_ytdlp")
+    def _click_settings(self, icon, item) -> None:
+        if self.on_open_settings:
+            try: self.on_open_settings()
+            except Exception: log.exception("open_settings")

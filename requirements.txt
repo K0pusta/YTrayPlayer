@@ -4,3 +4,4 @@ pywin32>=306
 win11toast>=0.35
 PySide6>=6.6.0
 psutil>=5.9
+pypresence>=4.3.0

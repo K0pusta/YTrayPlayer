@@ -29,46 +29,42 @@ PLAYLISTS_PATH = DATA_DIR / "playlists.json"
 LOGS_DIR = DATA_DIR / "logs"
 LOGS_DIR.mkdir(exist_ok=True)
 
+HOTKEY_DESCRIPTIONS = {
+    "play_pause":       "Play / Pause",
+    "next":             "Следующий трек",
+    "prev":             "Предыдущий трек",
+    "vol_up":           "Громкость +",
+    "vol_down":         "Громкость −",
+    "favorite":         "В избранное",
+    "play_clip":        "Играть из буфера",
+    "toggle_shuffle":   "Shuffle очереди",
+}
+
 DEFAULTS: dict[str, Any] = {
-    # Что играет при старте. Пусто = ничего не играет, ждём команды пользователя.
     "start_url": "",
-
-    # Радио-режим: играет, когда очередь пуста
     "radio_url": "https://www.youtube.com/live/rFZHOHl-L8A",
-
-    # Громкость mpv (0–150)
     "volume": 100,
-
-    # Язык: "ru" | "en"
     "language": "ru",
-
-    # Уведомления вкл/выкл
     "notifications": True,
-
-    # Хоткеи вкл/выкл
     "hotkeys_enabled": True,
-
-    # Shuffle очереди
     "shuffle_queue": False,
+    "favorites_shuffle": False,
+    "discord_rpc": True,
+    "discord_app_id": "1553697073432629288",
 
-    # Настраиваемые хоткеи (формат pywin32)
     "hotkeys": {
-        "play_pause":       {"mods": 0x0003, "key": 0x50},   # Ctrl+Alt+P
-        "next":             {"mods": 0x0003, "key": 0x27},   # Ctrl+Alt+Right
-        "prev":             {"mods": 0x0003, "key": 0x25},   # Ctrl+Alt+Left
-        "vol_up":           {"mods": 0x0003, "key": 0x26},   # Ctrl+Alt+Up
-        "vol_down":         {"mods": 0x0003, "key": 0x28},   # Ctrl+Alt+Down
-        "mute":             {"mods": 0x0003, "key": 0x4D},   # Ctrl+Alt+M
-        "favorite":         {"mods": 0x0003, "key": 0x46},   # Ctrl+Alt+F
-        "play_clip":        {"mods": 0x0003, "key": 0x56},   # Ctrl+Alt+V
-        "toggle_shuffle":   {"mods": 0x0003, "key": 0x53},   # Ctrl+Alt+S
+        "play_pause":       {"mods": 0x0003, "key": 0x50, "enabled": True},   # Ctrl+Alt+P
+        "next":             {"mods": 0x0003, "key": 0x27, "enabled": True},   # Ctrl+Alt+Right
+        "prev":             {"mods": 0x0003, "key": 0x25, "enabled": True},   # Ctrl+Alt+Left
+        "vol_up":           {"mods": 0x0003, "key": 0x26, "enabled": True},   # Ctrl+Alt+Up
+        "vol_down":         {"mods": 0x0003, "key": 0x28, "enabled": True},   # Ctrl+Alt+Down
+        "favorite":         {"mods": 0x0003, "key": 0x46, "enabled": True},   # Ctrl+Alt+F
+        "play_clip":        {"mods": 0x0003, "key": 0x56, "enabled": True},   # Ctrl+Alt+V
+        "toggle_shuffle":   {"mods": 0x0003, "key": 0x53, "enabled": True},   # Ctrl+Alt+S
     },
 
-    # Пути к бинарникам (относительно папки exe/проекта)
     "mpv_path": "bin/mpv/mpv.exe",
     "ytdlp_path": "bin/yt-dlp.exe",
-
-    # Логи
     "log_level": "INFO",
 }
 
@@ -107,7 +103,6 @@ class Config:
 
     def __setitem__(self, key: str, value: Any) -> None:
         self.set(key, value)
-
 
 def _merge(base: dict, override: dict) -> dict:
     out = dict(base)

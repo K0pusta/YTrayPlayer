@@ -8,15 +8,19 @@ from config import config
 from logging_setup import log
 from player import MpvPlayer
 from playqueue import PlaybackQueue
-from hotkeys import HotkeyManager
+from hotkeys import HotkeyManager, vk_to_string
 from tray import TrayIcon
 from clipboard import get_youtube_from_clipboard
 from input_dialog import InputDialog, PlaylistPickerDialog
+from search_dialog import SearchDialog
+from settings_dialog import SettingsDialog
+from playlist_editor import PlaylistEditorDialog
 from favorites import Favorites
 from playlists import Playlists, is_playlist_url
 from resume import Resume
 from youtube import Track, update_ytdlp
 from i18n import i18n
+from discord_rpc import DiscordRPC
 import notify
 
 def on_track(track: Track) -> None:
@@ -42,49 +46,41 @@ def main() -> None:
     pls = Playlists()
     resume = Resume()
     last_url = {"value": ""}
+    discord_rpc = DiscordRPC()
 
     hotkeys_active = {"value": bool(config.get("hotkeys_enabled", True))}
-    favorites_shuffle = {"value": bool(config.get("favorites_shuffle", False))}
 
     ui_queue: "_queue.Queue" = _queue.Queue()
 
-    # --- хоткеи ---
     hk = HotkeyManager()
 
     def _hotkeys_enabled() -> bool:
         return hotkeys_active["value"] and bool(config.get("hotkeys_enabled", True))
 
     def hk_play_pause():
-        if not _hotkeys_enabled():
-            return
+        if not _hotkeys_enabled(): return
         player.pause()
 
     def hk_next():
-        if not _hotkeys_enabled():
-            return
+        if not _hotkeys_enabled(): return
         q.next()
 
     def hk_prev():
-        if not _hotkeys_enabled():
-            return
+        if not _hotkeys_enabled(): return
         q.prev()
 
     def hk_vol_up():
-        if not _hotkeys_enabled():
-            return
+        if not _hotkeys_enabled(): return
         player.next_vol(5)
 
     def hk_vol_down():
-        if not _hotkeys_enabled():
-            return
+        if not _hotkeys_enabled(): return
         player.next_vol(-5)
 
     def hk_favorite():
-        if not _hotkeys_enabled():
-            return
+        if not _hotkeys_enabled(): return
         cur = q.current()
-        if not cur:
-            return
+        if not cur: return
         added = fav.add_track(cur)
         if added:
             print(f"\n[hotkey] добавлено в избранное: {cur.title}")
@@ -92,16 +88,14 @@ def main() -> None:
                 tray_ref["obj"].refresh_menu()
 
     def hk_play_clip():
-        if not _hotkeys_enabled():
-            return
+        if not _hotkeys_enabled(): return
         url = get_youtube_from_clipboard()
         if url:
             last_url["value"] = url
             q.play_url(url)
 
     def hk_toggle_shuffle():
-        if not _hotkeys_enabled():
-            return
+        if not _hotkeys_enabled(): return
         new_val = not q.shuffle
         q.set_shuffle(new_val)
         print(f"\n[hotkey] shuffle: {'вкл' if new_val else 'выкл'}")
@@ -121,9 +115,7 @@ def main() -> None:
         hk.register(name, cb)
 
     hk.start()
-    # --- конец хоткеев ---
 
-    # --- трей ---
     def tray_play_pause():
         player.pause()
 
@@ -145,10 +137,15 @@ def main() -> None:
     def tray_input_url():
         ui_queue.put("input_url")
 
+    def tray_search():
+        ui_queue.put("search")
+
+    def tray_open_settings():
+        ui_queue.put("settings")
+
     def tray_add_favorite():
         cur = q.current()
-        if not cur:
-            return
+        if not cur: return
         if fav.add_track(cur):
             if tray_ref["obj"]:
                 tray_ref["obj"].refresh_menu()
@@ -170,8 +167,8 @@ def main() -> None:
         if not tracks:
             notify.notify_info("Избранное пусто")
             return
-        q.play_tracks(tracks, shuffle=favorites_shuffle["value"])
-        print(f"\n[fav] играем всё избранное ({len(tracks)} треков, shuffle={favorites_shuffle['value']})")
+        q.play_tracks(tracks)
+        print(f"\n[fav] играем всё избранное ({len(tracks)} треков)")
 
     # --- плейлисты ---
 
@@ -184,13 +181,15 @@ def main() -> None:
     def tray_add_to_playlist():
         ui_queue.put("add_to_playlist")
 
+    def tray_edit_playlist(name: str):
+        ui_queue.put(("edit_playlist", name))
+
     def playlists_provider():
         return pls.all()
 
     def tray_play_playlist(name: str):
         item = pls.get(name)
-        if not item:
-            return
+        if not item: return
         if item.get("type") == "user":
             tracks = pls.user_tracks(name)
             if not tracks:
@@ -203,8 +202,7 @@ def main() -> None:
 
     def tray_play_playlist_shuffle(name: str):
         item = pls.get(name)
-        if not item or item.get("type") != "user":
-            return
+        if not item or item.get("type") != "user": return
         tracks = pls.user_tracks(name)
         if not tracks:
             notify.notify_info(f"Плейлист «{name}» пуст")
@@ -216,22 +214,7 @@ def main() -> None:
             if tray_ref["obj"]:
                 tray_ref["obj"].refresh_menu()
 
-    # --- уведомления / хоткеи / shuffle / язык / ytdlp ---
-
-    def tray_toggle_notifications():
-        new_val = not notify.is_enabled()
-        notify.set_enabled(new_val)
-
-    def notifications_state():
-        return notify.is_enabled()
-
-    def tray_toggle_hotkeys():
-        new_val = not bool(config.get("hotkeys_enabled", True))
-        config.set("hotkeys_enabled", new_val)
-        hotkeys_active["value"] = new_val
-
-    def hotkeys_state():
-        return bool(config.get("hotkeys_enabled", True)) and hotkeys_active["value"]
+    # --- shuffle (галочка в трее) ---
 
     def tray_toggle_shuffle():
         new_val = not q.shuffle
@@ -241,34 +224,6 @@ def main() -> None:
     def shuffle_state():
         return q.shuffle
 
-    def tray_toggle_favorites_shuffle():
-        new_val = not favorites_shuffle["value"]
-        favorites_shuffle["value"] = new_val
-        config.set("favorites_shuffle", new_val)
-        print(f"\n[fav-shuffle] {'вкл' if new_val else 'выкл'}")
-
-    def favorites_shuffle_state():
-        return favorites_shuffle["value"]
-
-    def tray_set_language(lang: str):
-        i18n.set_language(lang)
-        if tray_ref["obj"]:
-            tray_ref["obj"].rebuild_menu()
-
-    def language_state():
-        return str(config.get("language", "ru"))
-
-    def tray_update_ytdlp():
-        notify.notify_info("Обновление yt-dlp…")
-
-        def on_done(ok: bool, msg: str):
-            if ok:
-                notify.notify_info("yt-dlp обновлён")
-            else:
-                notify.notify_error(msg)
-
-        update_ytdlp(on_done)
-
     tray = TrayIcon(
         on_play_pause=tray_play_pause,
         on_next=tray_next,
@@ -276,38 +231,26 @@ def main() -> None:
         on_quit=tray_quit,
         on_play_clipboard=tray_play_clipboard,
         on_input_url=tray_input_url,
+        on_search=tray_search,
         on_add_favorite=tray_add_favorite,
         favorites_provider=favorites_provider,
         on_play_favorite=tray_play_favorite,
         on_remove_favorite=tray_remove_favorite,
         on_play_all_favorites=tray_play_all_favorites,
-        on_toggle_favorites_shuffle=tray_toggle_favorites_shuffle,
-        favorites_shuffle_state=favorites_shuffle_state,
         on_save_playlist=tray_save_playlist,
         playlists_provider=playlists_provider,
         on_play_playlist=tray_play_playlist,
         on_play_playlist_shuffle=tray_play_playlist_shuffle,
+        on_edit_playlist=tray_edit_playlist,
         on_remove_playlist=tray_remove_playlist,
         on_create_playlist=tray_create_playlist,
         on_add_current_to_playlist=tray_add_to_playlist,
-        on_toggle_notifications=tray_toggle_notifications,
-        notifications_state=notifications_state,
-        on_toggle_hotkeys=tray_toggle_hotkeys,
-        hotkeys_state=hotkeys_state,
         on_toggle_shuffle=tray_toggle_shuffle,
         shuffle_state=shuffle_state,
-        on_set_language=tray_set_language,
-        language_state=language_state,
-        on_update_ytdlp=tray_update_ytdlp,
+        on_open_settings=tray_open_settings,
     )
     tray_ref["obj"] = tray
     tray.start()
-
-    # --- лог mpv media-title (для диагностики) ---
-    def _on_mpv_title(t: str) -> None:
-        log.info("main: mpv media-title = %s", t)
-
-    player.on_title = _on_mpv_title
 
     _orig_on_track = q.on_track_changed
 
@@ -321,11 +264,19 @@ def main() -> None:
 
     def on_track_started(track: Track):
         resume.set_track(track)
+        try:
+            discord_rpc.update_track(
+                title=track.title,
+                uploader=getattr(track, "uploader", "") or "",
+                is_live=bool(track.is_live),
+            )
+        except Exception:
+            log.exception("discord_rpc.update_track")
 
     q.on_track_started = on_track_started
     # --- конец трея ---
 
-    # --- старт: resume или start_url ---
+    # --- старт ---
     start_url = config.get("start_url")
     if start_url:
         print("Играем стартовый URL…")
@@ -337,7 +288,6 @@ def main() -> None:
             q.play_track_direct(rt)
         else:
             print("Нечего продолжать — ждём команды пользователя")
-    # --- конец старта ---
 
     def watchdog():
         while not quit_flag["stop"]:
@@ -358,23 +308,16 @@ def main() -> None:
             except (EOFError, KeyboardInterrupt):
                 quit_flag["stop"] = True
                 break
-            if not cmd:
-                continue
+            if not cmd: continue
             if cmd == "q":
                 quit_flag["stop"] = True
                 break
-            elif cmd == "n":
-                q.next()
-            elif cmd == "p":
-                q.prev()
-            elif cmd in ("s", " "):
-                player.pause()
-            elif cmd == "+":
-                player.next_vol(5)
-            elif cmd == "-":
-                player.next_vol(-5)
-            elif cmd == "m":
-                player.toggle_mute()
+            elif cmd == "n": q.next()
+            elif cmd == "p": q.prev()
+            elif cmd in ("s", " "): player.pause()
+            elif cmd == "+": player.next_vol(5)
+            elif cmd == "-": player.next_vol(-5)
+            elif cmd == "m": player.toggle_mute()
             elif cmd.startswith("u "):
                 url = cmd[2:].strip()
                 if url:
@@ -385,12 +328,79 @@ def main() -> None:
 
     # --- UI-задачи ---
 
-    def process_ui_task(task: str) -> None:
+    def process_ui_task(task) -> None:
+        # task может быть tuple ("edit_playlist", name) или str
+        if isinstance(task, tuple) and task and task[0] == "edit_playlist":
+            name = task[1]
+            data = PlaylistEditorDialog.pick(pls, name)
+            if not data:
+                return
+
+            if data.get("renamed"):
+                old_name = data["name_old"]
+                new_name = data["name_new"]
+                if pls.rename(old_name, new_name):
+                    print(f"\n[edit] переименован: {old_name} → {new_name}")
+                    name = new_name
+                else:
+                    notify.notify_error(f"Не удалось переименовать «{old_name}»")
+                    return
+
+            if pls.set_user_tracks(name, data.get("tracks", [])):
+                print(f"\n[edit] плейлист «{name}» сохранён")
+                if tray_ref["obj"]:
+                    tray_ref["obj"].refresh_menu()
+            return
+
         if task == "input_url":
             url = InputDialog.get_url("Играть ссылку")
             if url:
                 last_url["value"] = url
                 q.play_url(url)
+
+        elif task == "search":
+            track = SearchDialog.pick()
+            if track:
+                print(f"\n[search] играем: {track.title}")
+                last_url["value"] = track.url
+                q.play_url(track.url)
+
+        elif task == "settings":
+            data = SettingsDialog.pick()
+            if not data:
+                return
+
+            new_lang = data.get("language", "ru")
+            if new_lang != config.get("language", "ru"):
+                i18n.set_language(new_lang)
+                if tray_ref["obj"]:
+                    tray_ref["obj"].rebuild_menu()
+                print(f"\n[settings] язык: {new_lang}")
+
+            new_notif = bool(data.get("notifications", True))
+            if new_notif != notify.is_enabled():
+                notify.set_enabled(new_notif)
+                print(f"\n[settings] уведомления: {'вкл' if new_notif else 'выкл'}")
+
+            new_discord = bool(data.get("discord_rpc", True))
+            if new_discord != discord_rpc.is_enabled():
+                discord_rpc.set_enabled(new_discord)
+                print(f"\n[settings] discord: {'вкл' if new_discord else 'выкл'}")
+
+            new_hotkeys = data.get("hotkeys", {})
+            old_hotkeys = config.get("hotkeys", {}) or {}
+            if new_hotkeys != old_hotkeys:
+                config.set("hotkeys", new_hotkeys)
+                print("\n[settings] хоткеи обновлены — перерегистрирую…")
+                registered, failed = hk.reregister()
+                print(f"[settings] зарегистрировано: {len(registered)}, ошибок: {len(failed)}")
+                if failed:
+                    for fname, err in failed:
+                        spec = new_hotkeys.get(fname, {})
+                        combo = vk_to_string(spec.get("mods", 0), spec.get("key", 0))
+                        notify.notify_error(
+                            f"Хоткей {fname} ({combo}) занят другой программой"
+                        )
 
         elif task == "save_playlist":
             url = last_url["value"]
@@ -404,12 +414,10 @@ def main() -> None:
                 title="Сохранить YouTube-плейлист",
                 prompt="Введите имя плейлиста:",
             )
-            if not name:
-                return
+            if not name: return
             if pls.add_youtube(name, url):
                 notify.notify_info(f"Плейлист «{name}» сохранён")
-                if tray_ref["obj"]:
-                    tray_ref["obj"].refresh_menu()
+                if tray_ref["obj"]: tray_ref["obj"].refresh_menu()
             else:
                 notify.notify_info("Имя занято или такой плейлист уже сохранён")
 
@@ -418,12 +426,10 @@ def main() -> None:
                 title="Новый плейлист",
                 prompt="Введите имя нового плейлиста:",
             )
-            if not name:
-                return
+            if not name: return
             if pls.add_user(name):
                 notify.notify_info(f"Плейлист «{name}» создан")
-                if tray_ref["obj"]:
-                    tray_ref["obj"].refresh_menu()
+                if tray_ref["obj"]: tray_ref["obj"].refresh_menu()
             else:
                 notify.notify_info("Имя занято")
 
@@ -440,23 +446,19 @@ def main() -> None:
                     title="Новый плейлист",
                     prompt="Введите имя нового плейлиста:",
                 )
-                if not name:
-                    return
+                if not name: return
                 if pls.add_user(name):
                     pls.add_track_to_user(name, cur)
                     notify.notify_info(f"Создан «{name}» и добавлен трек")
-                    if tray_ref["obj"]:
-                        tray_ref["obj"].refresh_menu()
+                    if tray_ref["obj"]: tray_ref["obj"].refresh_menu()
                 else:
                     notify.notify_info("Имя занято")
                 return
 
-            if not selected:
-                return
+            if not selected: return
             if pls.add_track_to_user(selected, cur):
                 notify.notify_info(f"Добавлено в «{selected}»")
-                if tray_ref["obj"]:
-                    tray_ref["obj"].refresh_menu()
+                if tray_ref["obj"]: tray_ref["obj"].refresh_menu()
             else:
                 notify.notify_info("Трек уже в плейлисте")
 
@@ -471,6 +473,10 @@ def main() -> None:
         quit_flag["stop"] = True
     finally:
         print("\nВыход…")
+        try:
+            discord_rpc.shutdown()
+        except Exception:
+            pass
         tray.stop()
         hk.unregister_all()
         hk.stop()
