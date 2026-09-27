@@ -25,15 +25,15 @@ import notify
 
 def on_track(track: Track) -> None:
     tag = "LIVE" if track.is_live else "VOD"
-    print(f"\n▶ [{tag}] {track.title}\n")
+    log.info("▶ [%s] %s", tag, track.title)
     notify.notify_track(track.title, track.is_live)
 
 def on_error(msg: str) -> None:
-    print(f"\n⚠ {msg}\n")
+    log.error("⚠ %s", msg)
     notify.notify_error(msg)
 
 def main() -> None:
-    print("Запуск mpv…")
+    log.info("Запуск mpv…")
     player = MpvPlayer()
 
     q = PlaybackQueue(player)
@@ -83,7 +83,7 @@ def main() -> None:
         if not cur: return
         added = fav.add_track(cur)
         if added:
-            print(f"\n[hotkey] добавлено в избранное: {cur.title}")
+            log.info("[hotkey] добавлено в избранное: %s", cur.title)
             if tray_ref["obj"]:
                 tray_ref["obj"].refresh_menu()
 
@@ -98,7 +98,7 @@ def main() -> None:
         if not _hotkeys_enabled(): return
         new_val = not q.shuffle
         q.set_shuffle(new_val)
-        print(f"\n[hotkey] shuffle: {'вкл' if new_val else 'выкл'}")
+        log.info("[hotkey] shuffle: %s", "вкл" if new_val else "выкл")
         if tray_ref["obj"]:
             tray_ref["obj"].refresh_menu()
 
@@ -168,7 +168,7 @@ def main() -> None:
             notify.notify_info("Избранное пусто")
             return
         q.play_tracks(tracks)
-        print(f"\n[fav] играем всё избранное ({len(tracks)} треков)")
+        log.info("[fav] играем всё избранное (%d треков)", len(tracks))
 
     # --- плейлисты ---
 
@@ -214,12 +214,12 @@ def main() -> None:
             if tray_ref["obj"]:
                 tray_ref["obj"].refresh_menu()
 
-    # --- shuffle (галочка в трее) ---
+    # --- shuffle ---
 
     def tray_toggle_shuffle():
         new_val = not q.shuffle
         q.set_shuffle(new_val)
-        print(f"\n[shuffle] {'вкл' if new_val else 'выкл'}")
+        log.info("[shuffle] %s", "вкл" if new_val else "выкл")
 
     def shuffle_state():
         return q.shuffle
@@ -274,20 +274,19 @@ def main() -> None:
             log.exception("discord_rpc.update_track")
 
     q.on_track_started = on_track_started
-    # --- конец трея ---
 
     # --- старт ---
     start_url = config.get("start_url")
     if start_url:
-        print("Играем стартовый URL…")
+        log.info("Играем стартовый URL…")
         q.play_startup()
     else:
         rt = resume.get_track()
         if rt:
-            print(f"Продолжаем с: {rt.title}")
+            log.info("Продолжаем с: %s", rt.title)
             q.play_track_direct(rt)
         else:
-            print("Нечего продолжать — ждём команды пользователя")
+            log.info("Нечего продолжать — ждём команды пользователя")
 
     def watchdog():
         while not quit_flag["stop"]:
@@ -296,9 +295,9 @@ def main() -> None:
 
     threading.Thread(target=watchdog, name="watchdog", daemon=True).start()
 
-    print(
-        "\nКоманды: n=next  p=prev  s=play/pause  +=громче  -=тише  "
-        "m=mute  u <url>=играть  q=выход\n"
+    log.info(
+        "Команды: n=next  p=prev  s=play/pause  +=громче  -=тише  "
+        "m=mute  u <url>=играть  q=выход"
     )
 
     def input_loop():
@@ -329,7 +328,6 @@ def main() -> None:
     # --- UI-задачи ---
 
     def process_ui_task(task) -> None:
-        # task может быть tuple ("edit_playlist", name) или str
         if isinstance(task, tuple) and task and task[0] == "edit_playlist":
             name = task[1]
             data = PlaylistEditorDialog.pick(pls, name)
@@ -340,14 +338,14 @@ def main() -> None:
                 old_name = data["name_old"]
                 new_name = data["name_new"]
                 if pls.rename(old_name, new_name):
-                    print(f"\n[edit] переименован: {old_name} → {new_name}")
+                    log.info("[edit] переименован: %s → %s", old_name, new_name)
                     name = new_name
                 else:
                     notify.notify_error(f"Не удалось переименовать «{old_name}»")
                     return
 
             if pls.set_user_tracks(name, data.get("tracks", [])):
-                print(f"\n[edit] плейлист «{name}» сохранён")
+                log.info("[edit] плейлист «%s» сохранён", name)
                 if tray_ref["obj"]:
                     tray_ref["obj"].refresh_menu()
             return
@@ -361,7 +359,7 @@ def main() -> None:
         elif task == "search":
             track = SearchDialog.pick()
             if track:
-                print(f"\n[search] играем: {track.title}")
+                log.info("[search] играем: %s", track.title)
                 last_url["value"] = track.url
                 q.play_url(track.url)
 
@@ -375,25 +373,26 @@ def main() -> None:
                 i18n.set_language(new_lang)
                 if tray_ref["obj"]:
                     tray_ref["obj"].rebuild_menu()
-                print(f"\n[settings] язык: {new_lang}")
+                log.info("[settings] язык: %s", new_lang)
 
             new_notif = bool(data.get("notifications", True))
             if new_notif != notify.is_enabled():
                 notify.set_enabled(new_notif)
-                print(f"\n[settings] уведомления: {'вкл' if new_notif else 'выкл'}")
+                log.info("[settings] уведомления: %s", "вкл" if new_notif else "выкл")
 
             new_discord = bool(data.get("discord_rpc", True))
             if new_discord != discord_rpc.is_enabled():
                 discord_rpc.set_enabled(new_discord)
-                print(f"\n[settings] discord: {'вкл' if new_discord else 'выкл'}")
+                log.info("[settings] discord: %s", "вкл" if new_discord else "выкл")
 
             new_hotkeys = data.get("hotkeys", {})
             old_hotkeys = config.get("hotkeys", {}) or {}
             if new_hotkeys != old_hotkeys:
                 config.set("hotkeys", new_hotkeys)
-                print("\n[settings] хоткеи обновлены — перерегистрирую…")
+                log.info("[settings] хоткеи обновлены — перерегистрирую…")
                 registered, failed = hk.reregister()
-                print(f"[settings] зарегистрировано: {len(registered)}, ошибок: {len(failed)}")
+                log.info("[settings] зарегистрировано: %d, ошибок: %d",
+                         len(registered), len(failed))
                 if failed:
                     for fname, err in failed:
                         spec = new_hotkeys.get(fname, {})
@@ -472,16 +471,48 @@ def main() -> None:
     except KeyboardInterrupt:
         quit_flag["stop"] = True
     finally:
-        print("\nВыход…")
+        log.info("Выход…")
         try:
             discord_rpc.shutdown()
         except Exception:
-            pass
-        tray.stop()
-        hk.unregister_all()
-        hk.stop()
-        player.shutdown()
-
+            log.exception("discord_rpc.shutdown")
+        try:
+            tray.stop()
+        except Exception:
+            log.exception("tray.stop")
+        try:
+            hk.unregister_all()
+            hk.stop()
+        except Exception:
+            log.exception("hk.stop")
+        try:
+            player.shutdown()
+        except Exception:
+            log.exception("player.shutdown")
+        try:
+            config.shutdown()   # <-- синхронный сброс конфига
+        except Exception:
+            log.exception("config.shutdown")
 
 if __name__ == "__main__":
-    main()
+    import atexit
+    import traceback
+    import sys as _sys
+
+    def _excepthook(t, v, tb):
+        log.exception("НЕОБРАБОТАННОЕ ИСКЛЮЧЕНИЕ")
+        traceback.print_exception(t, v, tb)
+
+    _sys.excepthook = _excepthook
+
+    def _on_exit():
+        log.info("=== atexit: процесс завершается ===")
+        traceback.print_stack()
+
+    atexit.register(_on_exit)
+
+    try:
+        main()
+    except BaseException:
+        log.exception("main() упал")
+        raise

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import queue
 import sys
 import threading
 from pathlib import Path
@@ -19,6 +20,12 @@ except Exception:
     log.exception("win11toast недоступен")
     _toast = None
 
+# --- очередь уведомлений + один воркер ---------------------------------------
+
+_queue: "queue.Queue[Optional[tuple[str, str]]]" = queue.Queue()
+_worker_started = False
+_worker_lock = threading.Lock()
+
 def _icon_path() -> Optional[str]:
     if getattr(sys, "frozen", False):
         base = Path(sys.executable).parent
@@ -27,30 +34,45 @@ def _icon_path() -> Optional[str]:
     p = base / "assets" / "icon.ico"
     return str(p) if p.exists() else None
 
-def _show(title: str, message: str) -> None:
-    if not config.get("notifications", True):
-        log.debug("Уведомления отключены, пропуск: %s / %s", title, message)
-        return
-    if _toast is None:
-        log.debug("win11toast недоступен, пропуск: %s / %s", title, message)
-        return
-
-    icon = _icon_path()
-
-    def worker():
+def _worker_loop() -> None:
+    log.info("notify: воркер тостов запущен")
+    while True:
+        item = _queue.get()
+        if item is None:
+            log.info("notify: воркер тостов завершён")
+            return
+        title, message = item
         try:
             kwargs = {
                 "title": title,
                 "body": message,
                 "duration": "short",
             }
+            icon = _icon_path()
             if icon:
                 kwargs["icon"] = icon
             _toast(**kwargs)
         except Exception:
             log.exception("Ошибка показа уведомления")
 
-    threading.Thread(target=worker, name="toast", daemon=True).start()
+def _ensure_worker() -> None:
+    global _worker_started
+    with _worker_lock:
+        if _worker_started:
+            return
+        threading.Thread(target=_worker_loop, name="toast-worker", daemon=True).start()
+        _worker_started = True
+
+
+def _show(title: str, message: str) -> None:
+    if not config.get("notifications", True):
+        return
+    if _toast is None:
+        log.debug("win11toast недоступен, пропуск: %s / %s", title, message)
+        return
+
+    _ensure_worker()
+    _queue.put((title, message))
 
 # ---------------------------------------------------------------- публичные
 
